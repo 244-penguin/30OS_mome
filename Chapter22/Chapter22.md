@@ -11,7 +11,7 @@
 - 例外発生することなく悪さができたら成功
 
 ### 悪さその1.タイマの割り込み周期変更
-```
+``` {.line-number}
 ; crack3.nas
 [INSTRSET "i486p"]
 [BITS 32]
@@ -47,7 +47,7 @@ fin:
 ```
 - 結果は，，，失敗（例外発生）
     - アプリモードではCLT，STI，HLTすべてが例外になる
-    - 割り込み関係はOSが管理する！
+    - 割り込み関係はOSが管理するのでアプリは触れないようになってる
 
 ### 悪さその3.OS中のCLIをする関数をfar-CALL
 - bootpack.mapの中からcliする関数のアドレスを調べる
@@ -112,9 +112,6 @@ int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int 
 ### バグを含んだアプリケーションを実行してみる
 ```c
 /* bug1.c */
-void api_putchar(int c);
-void api_end(void);
-
 void HariMain(void)
 {
 	char a[100];
@@ -129,7 +126,8 @@ void HariMain(void)
 ```
 - QEMU上だとなぜか実行できる
 	- なんで？
-	- ![harib19a](harib19b.PNG "harib19a")
+
+		![harib19a](harib19b.PNG "harib19a")
 
 - 実機だと設定されていない例外が発生してPCがリセットされるらしい
 	- スタック例外が発生する（まだOSでは設定されていない例外）
@@ -139,17 +137,24 @@ void HariMain(void)
 - `inthandler0c`の設定　（`inthandler0d`の時とメッセージを変えただけ）
 	- スタック例外のメッセージを出して異常終了させる
 ```c
-/* dsctbl.c*/
-	set_gatedesc(idt + 0x0c, (int) asm_inthandler0c, 2 * 8, AR_INTGATE32); /* IDTに0x0cの例外処理を設定 */
-	set_gatedesc(idt + 0x0d, (int) asm_inthandler0d, 2 * 8, AR_INTGATE32);
-	set_gatedesc(idt + 0x20, (int) asm_inthandler20, 2 * 8, AR_INTGATE32);
+/* console.c */int *inthandler0c(int *esp)
+{
+	struct CONSOLE *cons = (struct CONSOLE *) *((int *) 0x0fec);
+	struct TASK *task = task_now();
+	char s[30];
+	cons_putstr0(cons, "\nINT 0C :\n Stack Exception.\n");
+	sprintf(s, "EIP = %08X\n", esp[11]);
+	cons_putstr0(cons, s);
+	return &(task->tss.esp0);	/* 異常終了させる */
+}
 ```
 - QEMU上だとやっぱり例外が出ない
-	- 実機だと"AB"と表示されてから例外が出るらしい
+- 実機だと"AB"と表示されてから例外が出るらしい
 	- a[102]は配列の領域は飛び出してるけどアプリのデータセグメント内なので文句をいわれない
 
 ### 例外を起こした命令の番地を取得してみる
-- EIPはESPから数えて11番目に積まれてるらしいので，そこから命令の番地を読みだす
+- デバッグのために，例外発生時に例外を起こした命令の番地を吐き出すようにしてみる
+	- EIP（命令の番地）はESPから数えて11番目に積まれてるらしいので，そこから読みだす
 	- 例外発生 → 現在の命令の番地をpushして例外処理をcallしてるから命令の番地が残っている？
 ```c
 /* console.c */
@@ -164,11 +169,14 @@ int *inthandler0c(int *esp)
 	return &(task->tss.esp0);	/* 異常終了させる */
 }
 ```
-- 実機で試せないからわからないけど，`a[123] = 'C'`の命令番地が出てくるらしい
+- 実機で試せないからわからないけど，例外を発生させた`a[123] = 'C'`の命令番地が出てくるらしい
+- ちなみに，EIP以外にも他のレジスタには以下のような値が入っているので場合によって出力させるのもよい
+![](2021-01-20-18-55-49.png)
 
 ## 3. アプリの強制終了（harib19c）
 - アプリが無限ループしているときに，キーボード操作で強制終了させたい
-	- `console.c`のconsole_taskではアプリの実行中にFIFOバッファを見てくれないので，`bootpack.c`に強制終了タスクを書く
+	- `bootpack.c`に強制終了タスクを書く
+		- `console.c`のconsole_taskではアプリの実行中にFIFOバッファを見てくれない
 	- 強制終了ボタンは`Shift + F1`
 ```c
 /* bootpack.c */
@@ -185,9 +193,11 @@ if (i == 256 + 0x3b && key_shift != 0 && task_cons->tss.ss0 != 0) {	/* Shift+F1�
 - アプリが動いていない時にはtask_cons->tss.ss0が確実に0になるように`naskfunc.nas`と`mtask.c`を改造
 
 
-![harib19c](harib19c.PNG "harib19c")
-
 - 無限に"a"を出力するアプリも無事強制終了できた
+
+	![harib19c](harib19c.PNG "harib19c")
+
+
 
 ## 4. C言語で文字列表示(1)（harib19d）
 ### C言語から文字列表示APIを呼び出したい
@@ -204,9 +214,6 @@ _api_putstr0:	; void api_putstr0(char *s);
 ```
 ```c
 /* hello4.c */
-void api_putstr0(char *s);
-void api_end(void);
-
 void HariMain(void)
 {
 	api_putstr0("hello, world\n");
@@ -217,7 +224,7 @@ void HariMain(void)
 	- なぜ？
 
 ### 一旦置いといてconsole.cの改造
-- `console.c`で，.hrbの先頭6バイトを書き換えてたけど，いらなくなったので消す
+- `console.c`で，.hrbの先頭6バイトを書き換えてた（Chapter21:harib18b）けど，いらなくなったので消す
 	- 6バイト = （関数呼び出し　→　RETFでコンソールへ戻ってくる処理）
 	- Chapter21でRETFによってアプリを呼び出すようにしたので，RETFでアプリを終了させることができない
 		- OSがアプリを起動するときにアプリ用のセグメントへfar-CALLする必要がある
@@ -245,12 +252,23 @@ if (finfo != 0) {
 
 ### 前節でうまく文字列が表示されなかった理由
 - EBXに"hello, world\n"が格納された番地が入ってるはずだけど，入ってなかった
+	```
+	; a_nask.nas
+	_api_putstr0:	; void api_putstr0(char *s);
+			PUSH	EBX
+			MOV		EDX,2 ; 機能番号2（文字列表示0） 機能番号はp.418参照
+			MOV		EBX,[ESP+8]		; EBXに文字列の番地を代入  ← ココ！
+			INT		0x40
+			POP		EBX
+			RET
+	```
 - なんで？ → EBXはアプリ用のデータセグメントを見ているけど，そこにデータ（今回は"hello, world\n"）を置いていなかったから
-- hrbファイルの先頭36バイトにデータ部分の転送番地などが記述されている
-	- bim2hrbで.hrbファイルを作ると自動で付与
-- ![](2021-01-19-18-11-01.png)
+- hrbファイルの先頭36バイトにデータ部分の転送番地などが記述されているのでデータセグメントの番地とかサイズの設定を確認する
+	- bim2hrbで.hrbファイルを作ると自動で付与される情報
 
-### `console.c`を修正
+ 	![](2021-01-19-18-11-01.png)
+
+### データをデータセグメントに置くように`console.c`を修正
 - データセグメントの大きさを.hrbファイルに書かれているサイズ分だけ確保
 - .hrbファイル内のデータをデータセグメントにコピー
 - ファイル内に"Hari"が書かれていない場合（bim2hrbで作った.hrbファイルでない場合）はエラーを出す
@@ -285,7 +303,8 @@ if (finfo != 0) {
 	}
 	```
 - 無事実行できた（bin2hrbで作ってないhello.hrbは動かなくなってる）
-- ![](2021-01-19-18-53-27.png)
+
+ 	![](2021-01-19-18-53-27.png)
 
 ### アセンブラだけでアプリを作ってみる
 ```
@@ -312,23 +331,26 @@ msg:
 		DB	"hello, world", 0x0a, 0
 ```
 - 問題なく動いた（ちゃんとbim2hrbで.hrbファイルを作るようにMakefileに書く）
-- ![](2021-01-19-19-01-19.png)
+
+	![](2021-01-19-19-01-19.png)
 
 ## 6. ウィンドウを出そう（harib19f）
 
 ### ウィンドウを出すAPIの作成
 - APIの設定
-	- EDX = 5
-	- EBX = ウィンドウのバッファ
-	- ESI = ウィンドウのx方向の大きさ
-	- EDI = ウィンドウのy方向の大きさ
-	- EAX = 透明色
-	- ECX = ウィンドウの名前
-	- EAX = ウィンドウを操作するための番号（リフレッシュとかに必要）
-		- このEAXを使ってアプリに値を渡したい
+	- OSに渡す値
+		- EDX = 5
+		- EBX = ウィンドウのバッファ
+		- ESI = ウィンドウのx方向の大きさ
+		- EDI = ウィンドウのy方向の大きさ
+		- EAX = 透明色
+		- ECX = ウィンドウの名前
+	- アプリに返す値
+		- EAX = ウィンドウを操作するための番号（リフレッシュとかに必要）
+
 - アプリ側にレジスタから値を渡す方法
-	- asm_hrb_apiがPUSHしたEAXの値を書き換える
-	- POPする時にアプリに値を渡すことができる
+	- asm_hrb_apiがPOPするEAXの値を書き換えて渡す
+		- スタックにPUSHされてる値を見つけて書き換える
 		```
 		; naskfunc.nas
 		_asm_hrb_api:
@@ -375,7 +397,8 @@ msg:
 		```
 
 - テストアプリを作って実行
-- ![](2021-01-19-19-45-27.png)
+
+	![](2021-01-19-19-45-27.png)
 
 ## 7. ウィンドウに文字や四角を書こう（harib19g）
 - ウィンドウへ文字を表示させるAPI
@@ -468,4 +491,5 @@ void HariMain(void)
 
 ```
 - 新たに作った"hello"ウィンドウ内に文字列と黄色い四角を表示できた
-- ![](2021-01-20-18-14-06.png)
+
+	![](2021-01-20-18-14-06.png)
