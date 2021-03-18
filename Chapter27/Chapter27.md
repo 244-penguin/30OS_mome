@@ -156,7 +156,7 @@ struct TASK {
 - TSSを作る際にLDTをGDTの中に設定し，そのLDT番号をtss.ldtrに書き込んでおく(`mtask.c`)
 - アプリ用のセグメントをLDTの中に作るように`console.c`を改造
 	- start_appでセグメント番号の指定の際に4を足すとLDTの番号として認識される
-	- LDTはタスクに固有のモノなので，タスク同士で番号セグメント番号が被っていても自分のタスクのLDTにしかアクセスできない
+	- LDTはタスクに固有のモノなので，タスク同士でセグメント番号が被っていても自分のタスクのLDTにしかアクセスできない
 ```c
 /* console.c */
 int cmd_app(struct CONSOLE *cons, int *fat, char *cmdline)
