@@ -308,7 +308,7 @@ void HariMain(void)
 
 - OS用，ライブラリ用のmakefileを作ってそれぞれのフォルダ内に配置
 	- 今までの`Makefile`から必要な部分のみを取り出したもの
-	- コマンドは"make", "make clean", "make src_only"
+	- 使えるコマンドは"make", "make clean", "make src_only"（make runはできない）
 ```makefile
 ; Makefile
 OBJS_BOOTPACK = bootpack.obj naskfunc.obj hankaku.obj graphic.obj dsctbl.obj \
