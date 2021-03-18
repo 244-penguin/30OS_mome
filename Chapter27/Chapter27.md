@@ -85,7 +85,7 @@ int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int 
 ![](2021-03-10-19-03-04.png)　![](2021-03-10-19-03-52.png)
 
 ## 3.アプリケーションを守ろう(1)(harib24c)
-- 動作中のアプリを壊してみ（`crack7.nas`）
+- 動作中のアプリを壊してみる（`crack7.nas`）
 ```
 ; crack7.nas
 [FORMAT "WCOFF"]
