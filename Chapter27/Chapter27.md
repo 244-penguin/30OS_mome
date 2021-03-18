@@ -256,7 +256,7 @@ a.bim : a.obj $(OBJS_API) Makefile
 
 ↓　
 # .objファイルを指定していた部分をapilib.libに変更
-a.biｓ: a.obj apilib.lib Makefile
+a.bim: a.obj apilib.lib Makefile
 	$(OBJ2BIM) @$(RULEFILE) out:a.bim map:a.map a.obj apilib.lib
 ```
 - ヘッダファイルを作成
