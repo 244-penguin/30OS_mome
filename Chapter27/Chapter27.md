@@ -309,6 +309,7 @@ void HariMain(void)
 - OS用，ライブラリ用のmakefileを作ってそれぞれのフォルダ内に配置
 	- 今までの`Makefile`から必要な部分のみを取り出したもの
 	- 使えるコマンドは"make", "make clean", "make src_only"（make runはできない）
+- OS用の`Makefile`
 ```makefile
 ; Makefile
 OBJS_BOOTPACK = bootpack.obj naskfunc.obj hankaku.obj graphic.obj dsctbl.obj \
@@ -392,6 +393,7 @@ src_only :
 	-$(DEL) haribote.sys
 
 ```
+- ライブラリ用の`Makefile`
 ```makefile
 ; Makefile
 OBJS_API =	api001.obj api002.obj api003.obj api004.obj api005.obj api006.obj \
