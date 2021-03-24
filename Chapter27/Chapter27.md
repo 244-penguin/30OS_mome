@@ -29,13 +29,12 @@
 
 ## 2.アプリ実行中でもコンソールを閉じたい(harib24b)
 - 今の状態だとコンソールから（ncstを使わないで）アプリを起動すると起動したアプリが終了するまでコンソールを閉じることができない
-- `bootpack.c`を改造
-- xボタンが押されると，一旦コンソールを非表示にする
-	- スムーズに閉じたように見せかけたいため
-	- → 終了処理に時間がかかることもあるので
+- まずは`bootpack.c`を改造
+	- xボタンが押されると，一旦コンソールを非表示にする
+		- スムーズに閉じたように見せかけたいため
+		- → 終了処理に時間がかかることもあるので
 ```c
 /* bootpack.c */
-; bootpack.c
 if (sht->bxsize - 21 <= x && x < sht->bxsize - 5 && 5 <= y && y < 19) {
 	/* 「×」ボタンクリック */
 	if ((sht->flags & 0x10) != 0) {		/* アプリが作ったウィンドウか？ */
@@ -53,15 +52,32 @@ if (sht->bxsize - 21 <= x && x < sht->bxsize - 5 && 5 <= y && y < 19) {
 }
 ```
 - `console.c`の改造
-	- sheetの代わりにcons.shtを使う
+	- sheetの代わりにcons.shtを使ってコンソールのon/offを判定する
 		- コンソールウィンドウが閉じられたらcons.shtを0に変更する（sheetは変わらない）
-	- 入力待機中にコンソールタスクに4（xボタンが押された）が来たらコンソールを閉じる
 ```c
 /* console.c */
 if (i <= 1) { /* カーソル用タイマ */
 ↓
-if (i <= 1 && cons.sht != 0) { /* カーソル用タイマ */
+if (i <= 1 && cons.sht != 0) { /*こう！*/
+
+if (i == 3) {	/* カーソルOFF */
+	if (sheet != 0) { /*ココを*/
+		boxfill8(sheet->buf, sheet->bxsize, COL8_000000,
+			cons.cur_x, cons.cur_y, cons.cur_x + 7, cons.cur_y + 15);
+	}
+	cons.cur_c = -1;
+}
+↓
+if (i == 3) {	/* カーソルOFF */
+	if (cons.sht != 0) { /*こう！*/
+		boxfill8(cons.sht->buf, cons.sht->bxsize, COL8_000000,
+			cons.cur_x, cons.cur_y, cons.cur_x + 7, cons.cur_y + 15);
+	}
+	cons.cur_c = -1;
+}
 ```
+- 入力待機中にコンソールタスクに4（xボタンが押された）が来たらコンソールを閉じる
+	- cons.shtを0に
 ```c
 /* console.c */
 int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int eax)
@@ -73,7 +89,7 @@ int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int 
 			if (i == 4) {	/* 入力待機中にコンソールタスクに4（xボタンが押された）が来たらコンソールを閉じる */
 				timer_cancel(cons->timer);
 				io_cli();
-				fifo32_put(sys_fifo, cons->sht - shtctl->sheets0 + 2024);	/* 2024～2279 */
+				fifo32_put(sys_fifo, cons->sht - shtctl->sheets0 + 2024);	
 				cons->sht = 0;
 				io_sti();
 			}
@@ -142,18 +158,35 @@ fin:								; 終了
 - `bootpack.h`にセグメント属性番号を追加
 ```h
 /* bootpack.h*/
-#define AR_LDT			0x008
+#define AR_LDT			0x008　/* ココ */
 struct TASK {
-	int sel, flags; /* selはGDTの番号のこと */
+	int sel, flags; 
 	int level, priority;
 	struct FIFO32 fifo;
 	struct TSS32 tss;
-	struct SEGMENT_DESCRIPTOR ldt[2];
+	struct SEGMENT_DESCRIPTOR ldt[2]; /* ココ */
 	struct CONSOLE *cons;
 	int ds_base, cons_stack;
 };
 ```
-- TSSを作る際にLDTをGDTの中に設定し，そのLDT番号をtss.ldtrに書き込んでおく(`mtask.c`)
+- GDTの中にLDTを設定し，そのLDT番号をtss.ldtrに書き込んでおく(`mtask.c`)
+	- CPUがタスクの持つLDTを認識してくれる，，，らしい
+```c
+/* mtask.c */
+struct TASK *task_init(struct MEMMAN *memman)
+{
+	（中略）
+    for(i = 0; i < MAX_TASKS; i++){
+        taskctl->tasks0[i].flags = 0;
+        taskctl->tasks0[i].sel = (TASK_GDT0 + i) * 8;
+        taskctl->tasks0[i].tss.ldtr = (TASK_GDT0 + MAX_TASKS + i) * 8;
+        set_segmdesc(gdt + TASK_GDT0 + i, 103, (int) &taskctl->tasks0[i].tss, AR_TSS32);
+        set_segmdesc(gdt + TASK_GDT0 + MAX_TASKS + i, 15, (int) taskctl->tasks0[i].ldt, AR_LDT);
+
+    }
+	（中略）
+}
+```
 - アプリ用のセグメントをLDTの中に作るように`console.c`を改造
 	- start_appでセグメント番号の指定の際に4を足すとLDTの番号として認識される
 	- LDTはタスクに固有のモノなので，タスク同士でセグメント番号が被っていても自分のタスクのLDTにしかアクセスできない
@@ -546,6 +579,156 @@ src_only :
 	-$(DEL) $(APP).hrb
 
 ```
-- harib24g直下に置かれた`Makefile`のコマンド一覧
-	- 今までのmakeは何もかも作り直していたが，アプリだけ・OSだけmakeできるようにしたことで，OSやアプリを作り直した際のmake時間が短縮できるようになった（手を加えてない部分をmakeしなおさなくてよくなった）
+- harib24g直下に置かれた`Makefile`
+	- 基本的に以下のコマンド一覧のコマンドの処理が記述されている
+	- ただ，アプリ一つ一つについてmakeやcleanするコマンドが書かれているので，アプリを追加したときに`Makefile`を描きなおすのが大変そう
+	- 以下マンド一覧
 ![](2021-03-17-18-22-36.png)
+
+```
+; Makefile
+TOOLPATH = ../z_tools/
+INCPATH  = ../z_tools/haribote/
+
+MAKE     = $(TOOLPATH)make.exe -r
+EDIMG    = $(TOOLPATH)edimg.exe
+IMGTOL   = $(TOOLPATH)imgtol.com
+COPY     = copy
+DEL      = del
+
+# デフォルト動作
+
+default :
+	$(MAKE) haribote.img
+
+# ファイル生成規則
+
+haribote.img : haribote/ipl10.bin haribote/haribote.sys Makefile \
+		a/a.hrb hello3/hello3.hrb hello4/hello4.hrb hello5/hello5.hrb \
+		winhelo/winhelo.hrb winhelo2/winhelo2.hrb winhelo3/winhelo3.hrb \
+		star1/star1.hrb stars/stars.hrb stars2/stars2.hrb \
+		lines/lines.hrb walk/walk.hrb noodle/noodle.hrb \
+		beepdown/beepdown.hrb color/color.hrb color2/color2.hrb
+	$(EDIMG)   imgin:../z_tools/fdimg0at.tek \
+		wbinimg src:haribote/ipl10.bin len:512 from:0 to:0 \
+		copy from:haribote/haribote.sys to:@: \
+		copy from:haribote/ipl10.nas to:@: \
+		copy from:make.bat to:@: \
+		copy from:a/a.hrb to:@: \
+		copy from:hello3/hello3.hrb to:@: \
+		copy from:hello4/hello4.hrb to:@: \
+		copy from:hello5/hello5.hrb to:@: \
+		copy from:winhelo/winhelo.hrb to:@: \
+		copy from:winhelo2/winhelo2.hrb to:@: \
+		copy from:winhelo3/winhelo3.hrb to:@: \
+		copy from:star1/star1.hrb to:@: \
+		copy from:stars/stars.hrb to:@: \
+		copy from:stars2/stars2.hrb to:@: \
+		copy from:lines/lines.hrb to:@: \
+		copy from:walk/walk.hrb to:@: \
+		copy from:noodle/noodle.hrb to:@: \
+		copy from:beepdown/beepdown.hrb to:@: \
+		copy from:color/color.hrb to:@: \
+		copy from:color2/color2.hrb to:@: \
+		imgout:haribote.img
+
+# コマンド
+
+run :
+	$(MAKE) haribote.img
+	$(COPY) haribote.img ..\z_tools\qemu\fdimage0.bin
+	$(MAKE) -C ../z_tools/qemu
+
+install :
+	$(MAKE) haribote.img
+	$(IMGTOL) w a: haribote.img
+
+full :
+	$(MAKE) -C haribote
+	$(MAKE) -C apilib
+	$(MAKE) -C a
+	$(MAKE) -C hello3
+	$(MAKE) -C hello4
+	$(MAKE) -C hello5
+	$(MAKE) -C winhelo
+	$(MAKE) -C winhelo2
+	$(MAKE) -C winhelo3
+	$(MAKE) -C star1
+	$(MAKE) -C stars
+	$(MAKE) -C stars2
+	$(MAKE) -C lines
+	$(MAKE) -C walk
+	$(MAKE) -C noodle
+	$(MAKE) -C beepdown
+	$(MAKE) -C color
+	$(MAKE) -C color2
+	$(MAKE) haribote.img
+
+run_full :
+	$(MAKE) full
+	$(COPY) haribote.img ..\z_tools\qemu\fdimage0.bin
+	$(MAKE) -C ../z_tools/qemu
+
+install_full :
+	$(MAKE) full
+	$(IMGTOL) w a: haribote.img
+
+run_os :
+	$(MAKE) -C haribote
+	$(MAKE) run
+
+clean :
+# 何もしない
+
+src_only :
+	$(MAKE) clean
+	-$(DEL) haribote.img
+
+clean_full :
+	$(MAKE) -C haribote		clean
+	$(MAKE) -C apilib		clean
+	$(MAKE) -C a			clean
+	$(MAKE) -C hello3		clean
+	$(MAKE) -C hello4		clean
+	$(MAKE) -C hello5		clean
+	$(MAKE) -C winhelo		clean
+	$(MAKE) -C winhelo2		clean
+	$(MAKE) -C winhelo3		clean
+	$(MAKE) -C star1		clean
+	$(MAKE) -C stars		clean
+	$(MAKE) -C stars2		clean
+	$(MAKE) -C lines		clean
+	$(MAKE) -C walk			clean
+	$(MAKE) -C noodle		clean
+	$(MAKE) -C beepdown		clean
+	$(MAKE) -C color		clean
+	$(MAKE) -C color2		clean
+
+src_only_full :
+	$(MAKE) -C haribote		src_only
+	$(MAKE) -C apilib		src_only
+	$(MAKE) -C a			src_only
+	$(MAKE) -C hello3		src_only
+	$(MAKE) -C hello4		src_only
+	$(MAKE) -C hello5		src_only
+	$(MAKE) -C winhelo		src_only
+	$(MAKE) -C winhelo2		src_only
+	$(MAKE) -C winhelo3		src_only
+	$(MAKE) -C star1		src_only
+	$(MAKE) -C stars		src_only
+	$(MAKE) -C stars2		src_only
+	$(MAKE) -C lines		src_only
+	$(MAKE) -C walk			src_only
+	$(MAKE) -C noodle		src_only
+	$(MAKE) -C beepdown		src_only
+	$(MAKE) -C color		src_only
+	$(MAKE) -C color2		src_only
+	-$(DEL) haribote.img
+
+refresh :
+	$(MAKE) full
+	$(MAKE) clean_full
+	-$(DEL) haribote.img
+
+```
+- 今までのmakeは何もかも作り直していたが，アプリだけ・OSだけmakeできるようにしたことで，OSやアプリを作り直した際のmake時間が短縮できるようになった（手を加えてない部分をmakeしなおさなくてよくなった）
